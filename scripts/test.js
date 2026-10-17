@@ -98,6 +98,7 @@ const WEBHOOK_BODY = {
   last_name: 'Mehmood',
   full_name: 'Khalid Mehmood',
   email: 'lead@example.com',
+  phone: '+12405551234',
   'Child Age': '7',
   'College Start Year': '2037',
   'Current Savings': '15000',
@@ -276,6 +277,10 @@ test('Gmail mode: PDF attached as a file, sent from the Gmail account', () =>
     assert.strictEqual(message.replyTo, 'brightpathlegacywealth@gmail.com');
     assert.strictEqual(message.subject, 'Your 3-Way College Funding Showdown Report & Analysis');
     assert.ok(message.text.includes('Readiness Score: 56 / 100'));
+    // Booking button pre-fills the GHL calendar form with the lead's details.
+    const booking = 'https://api.leadconnectorhq.com/widget/booking/WKn9IvfaxeIQOS0QH7Up?first_name=Khalid&amp;last_name=Mehmood&amp;email=lead%40example.com&amp;phone=%2B12405551234';
+    assert.ok(message.html.includes('href="' + booking + '"'), 'personalized booking link in the email');
+    assert.ok(message.text.includes(booking.replace(/&amp;/g, '&')));
     assert.strictEqual(message.attachments[0].filename, 'BrightPath-College-Funding-Report-Khalid-Mehmood.pdf');
     assert.strictEqual(message.attachments[0].content.subarray(0, 5).toString(), '%PDF-');
   }));
