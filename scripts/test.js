@@ -16,6 +16,33 @@ const reportPdf = require('../api/pdf');
 const logo = require('../api/logo');
 const { calculateShowdown } = require('../lib/calc');
 
+// ---- fake Gmail (nodemailer) --------------------------------------------
+const nodemailer = require('nodemailer');
+let mails = [];
+nodemailer.createTransport = (options) => ({
+  sendMail: async (message) => {
+    mails.push({ options, message });
+    return { messageId: '<test@gmail>', accepted: [message.to], rejected: [] };
+  }
+});
+
+function withEnv(vars, fn) {
+  const saved = {};
+  for (const [k, v] of Object.entries(vars)) {
+    saved[k] = process.env[k];
+    if (v === null) delete process.env[k];
+    else process.env[k] = v;
+  }
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+}
+
 // ---- fake GHL API -------------------------------------------------------
 let calls = [];
 let routes = {};
@@ -234,6 +261,43 @@ test('dry run returns the numbers without emailing', async () => {
   assert.ok(!calls.some((c) => c.key === 'POST /conversations/messages'));
 });
 
+test('Gmail mode: PDF attached as a file, sent from the Gmail account', () =>
+  withEnv({ GMAIL_USER: 'sender@gmail.com', GMAIL_APP_PASSWORD: 'abcd efgh ijkl mnop' }, async () => {
+    const res = await run(sendReport, { query: { key: 'test-secret-123' }, body: WEBHOOK_BODY });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    assert.strictEqual(res.json().sender, 'gmail');
+    assert.strictEqual(calls.length, 0, 'no GHL calls in Gmail mode');
+    assert.strictEqual(mails.length, 1);
+    const { options, message } = mails[0];
+    assert.deepStrictEqual(options.auth, { user: 'sender@gmail.com', pass: 'abcdefghijklmnop' });
+    assert.strictEqual(options.host, 'smtp.gmail.com');
+    assert.deepStrictEqual(message.from, { name: 'BrightPath Legacy Wealth', address: 'sender@gmail.com' });
+    assert.strictEqual(message.to, 'lead@example.com');
+    assert.strictEqual(message.replyTo, 'brightpathlegacywealth@gmail.com');
+    assert.strictEqual(message.subject, 'Your 3-Way College Funding Showdown Report & Analysis');
+    assert.ok(message.text.includes('Readiness Score: 56 / 100'));
+    assert.strictEqual(message.attachments[0].filename, 'BrightPath-College-Funding-Report-Khalid-Mehmood.pdf');
+    assert.strictEqual(message.attachments[0].content.subarray(0, 5).toString(), '%PDF-');
+  }));
+
+test('Gmail mode: no valid lead email -> 400, nothing sent', () =>
+  withEnv({ GMAIL_USER: 'sender@gmail.com', GMAIL_APP_PASSWORD: 'x' }, async () => {
+    const res = await run(sendReport, { query: { key: 'test-secret-123' }, body: { ...WEBHOOK_BODY, email: 'not-an-email' } });
+    assert.strictEqual(res.statusCode, 400);
+    assert.ok(res.json().error.includes('email'));
+    assert.strictEqual(mails.length, 0);
+  }));
+
+test('no sender set up yet: dry run works, real send explains what is missing', () =>
+  withEnv({ GHL_TOKEN: null }, async () => {
+    const dry = await run(sendReport, { query: { key: 'test-secret-123', dry: '1' }, body: WEBHOOK_BODY });
+    assert.strictEqual(dry.statusCode, 200, dry.body);
+    assert.strictEqual(dry.json().score, 56);
+    const real = await run(sendReport, { query: { key: 'test-secret-123' }, body: WEBHOOK_BODY });
+    assert.strictEqual(real.statusCode, 500);
+    assert.ok(real.json().error.includes('GMAIL_USER'));
+  }));
+
 test('logo endpoint serves the JPEG', async () => {
   const res = await run(logo, { method: 'GET' });
   assert.strictEqual(res.headers['content-type'], 'image/jpeg');
@@ -283,6 +347,7 @@ test('math matches calculateShowdown() in index.html for every input combination
   let failed = 0;
   for (const t of tests) {
     calls = [];
+    mails = [];
     routes = happyRoutes();
     try {
       await t.fn();
