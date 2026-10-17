@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 30,
+      "includeFiles": "node_modules/pdfkit/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/r/:token/:file", "destination": "/api/pdf?t=:token" },
+    { "source": "/logo.jpg", "destination": "/api/logo" }
+  ]
+}
